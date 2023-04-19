@@ -1,0 +1,682 @@
+---
+title: Analyse des accidents de la route pendant l'année 2021 en fonction du lieu,
+  de la période, de l'age et du sexe
+author: "Groupe FLAL"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+  html_document:
+    toc: yes
+    toc_depth: 2
+---
+
+Sources de nos jeux de données : https://www.data.gouv.fr/fr/datasets/bases-de-donnees-annuelles-des-accidents-corporels-de-la-circulation-routiere-annees-de-2005-a-2021/
+
+##### Alex Delagrange, Léo Bouvier, Lucas Giry, Farah Seifeddine
+
+```{r setup, include=FALSE}
+library(xfun)
+library(dplyr)
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(leaflet) 
+library(maps)
+library(sf)
+library(lubridate)
+```
+
+
+
+
+
+\newpage !!!!! A faire !!!!! : 
+\newline - Télécharger le dossier "data" dans le même répertoire que les fichiers FLAL_stats.rmd et data.rmd
+\newline  - Run le fichier data.rmd 
+\newline  - Knit le fichier FLAL_stats.rmd en PDF 
+
+
+
+Contexte : En France en 2021, le début d'année est accompagné d'un confinement, il est interéssant de voir quels sont les chiffres à propos des accidents mais aussi, pour une étude plus globale de prévention, savoir quels sont les facteurs qui influencent la gravité des accidents.
+
+
+
+
+Ainsi, pour progresser de manière structurée dans notre étude, nous nous sommes posés la question suivante :
+
+Quels sont les facteurs importants impactant la gravité des accidents en France en 2021 ?
+
+
+Après avoir établi les différents facteurs nous avons effectué plusieurs croisements pour expliquer la gravité : Les usagers (age et sexe), les vehicules (catégorie), le lieu (régions et départements), l'environnement (équipement de sécurité et état de la route)
+  
+
+### Quelques éléments nécessaires à la compréhension : 
+
+Dans notre étude, un accident corporel est défini comme un accident survenu sur une voie ouverte à la circulation publique, impliquant au moins un véhicule et ayant fait au moins une victime ayant nécessité des soins. Cette définition prend en compte tous les accidents qui ont des conséquences physiques pour les personnes impliquées, qu'il s'agisse de blessures mineures ou de décès, ce qui nous permettra d'analyser les facteurs de risque des accidents de la route.
+
+Nous étudions les accidents de la route en France en 2021 et un individu de notre jeu de données est une personne touchée par un accidents.
+
+## Nettoyage et représentation du jeu de données
+
+En ce qui concerne la représentation des données nous avons choisi de représenter toutes les données dans une grande dataframe dont on récupérera les colonnes necessaires pour les différents facteurs. 
+
+Pour nettoyer notre jeu de données, nous avons d'abord examiné les valeurs manquantes, les doublons et les valeurs aberrantes. Par la suite nous avons enlevé les lignes de la dataframe sans données dans lesquelles les colonnes étaient remplies de -1. Nous avons aussi créer une nouvelle variable "region" en fonction de la valeur de la variable "dep", qui correspond à un code départemental. Après ce processus, nous avons constaté qu'environ 0,04 % des lignes ont été éliminées en raison de valeurs manquantes ou de doublons.
+
+En plus, 50 % des colonnes ont été éliminées car elles ne contenaient pas des informations pertinentes ou utiles pour notre analyse. Par exemple, la variable occutc qui indique le nombre d’occupants dans le transport en commun s'est avérée inutile, ainsi que le type de moteur du véhicule. Pour finir, il fallait enlever les caractères spéciaux des régions.
+
+Ce nettoyage nous a permis d'avoir un jeu de données plus cohérent, propre et exploitable pour notre analyse ultérieure dont voici un aperçu : 
+
+
+```{r echo=FALSE}
+df <- read_delim("data/data.csv", delim = ";", 
+    escape_double = FALSE, col_types = cols(Num_Acc = col_character(), 
+        id_vehicule = col_character(), hrmn = col_time(format = "%H:%M"), 
+        lat = col_character()), trim_ws = TRUE)
+# ajustement sur les données
+# long et lat as numeric
+df$lat <- sub(",", ".", df$lat)
+df$long <- sub(",", ".", df$long)
+df$lat <- as.numeric(df$lat)
+df$long <- as.numeric(df$long)
+
+# magouille pour éliminer les caractères spéciaux de région
+# df$region <- iconv(df$region, from = "ISO-8859-1", to = "UTF-8")
+# df$region <- sub("ï¿½Ã®", "î", df$region)
+# df$region <- sub("Ã*", "î", df$region)
+
+
+# charcter bizarre dans id_vehicule
+df$id_vehicule <- iconv(df$id_vehicule, from = "ISO-8859-1", to = "UTF-8")
+df$id_vehicule <- as.character(df$id_vehicule)
+
+head(df)
+```
+
+## Etude globale sur les accidents en 2021 en France
+
+On regarde d'abord juste une étude globale sur le nombre d'accidents en France en fonction du mois de l'année.
+
+
+```{r pressure, echo=FALSE, warning=FALSE}
+# accidents par mois en 2021
+plot_acc <- df %>% group_by(mois) %>% summarize("count" = n())
+# mois nom
+noms_mois <- c("janv", "févr", "mars", "avr", "mai", "juin", "juil", "août", "sept", "oct", "nov", "déc")
+mois_ordre <- factor(noms_mois, levels = noms_mois)
+# fonction pour associer le numéro de mois à son nom abrégé
+nom_mois <- function(num_mois) {
+  return(noms_mois[num_mois])
+}
+plot_acc$nom_mois <- factor(sapply(plot_acc$mois, nom_mois), levels = mois_ordre)
+# plot
+ggplot(data = plot_acc, aes(x=nom_mois, y=count)) +
+  geom_col(stat="identity", fill="darkred") +
+  ylab("nombre d'accidents") +
+  xlab("") +
+  ggtitle("Nombre d'accidents par mois en 2021")
+rm(plot_acc, noms_mois)
+```
+
+
+Ici on voit un gros pique en juin qui pourrait s'expliquer par la fin du confinement de 2021 ce qui a poussé les gens à sortir et donc à plus prendre la voiture ce qui implique forcément il y plus d'accidents.
+
+On peut aussi regarder le nombre d'accidents en fonction de la période de la journée : nuit, matin, après-midi ou soir
+
+```{r echo=FALSE, warning=FALSE}
+# créer la colonne "heure"
+# df$heure <- hms(sprintf("%02d:%02d:00", df$hrmn %/% 100, df$hrmn %% 100))
+# Créer une colonne "heure_de_la_journee" contenant la tranche horaire de l'accident
+df$heure_de_la_journee <- cut(as.integer(substr(df$hrmn, 1, 2)), breaks = c(-Inf, 6, 12, 18, Inf), labels = c("Nuit", "Matin", "Après-midi", "Soir"))
+# Compter le nombre d'accidents par heure de la journée
+accidents_par_heure <- df %>% 
+  group_by(heure_de_la_journee) %>% 
+  summarise(nombre_accidents = n()) %>% 
+  arrange(heure_de_la_journee)
+# Visualiser le nombre d'accidents par heure de la journée
+ggplot(accidents_par_heure, aes(x = heure_de_la_journee, y = nombre_accidents)) +
+  geom_bar(stat = "identity", fill = "darkred") +
+  xlab("") +
+  ylab("Nombre d'accidents") +
+  ggtitle("Nombre d'accidents par période de la journée en 2021")
+```
+
+
+On s'attend à voir ce graphique comme résultat, avec plus d'accidents en après-midi et le matin puisque c'est dans ces moments là de la journée que l'activité française est au plus haut avec les départs au travail et les enfants à amener à l'école.
+
+## Est ce que les usagers influencent la gravité des accidents ?
+
+### Commençons par étudier si l'âge du conducteur est en corrélation avec la gravité de l'accident
+
+```{r echo=FALSE, warning=FALSE}
+# Sous-ensemble de données contenant la gravité, l'âge et le nombre d'accidents pour chaque âge
+sub_df <- df %>% 
+  filter(place == 1, catu == 1, age > 13) %>%
+  group_by(grav, age) %>% 
+  summarise(nombre_accidents = n()) %>% 
+  filter(!is.na(age))
+
+sub_df$grav <- factor(sub_df$grav, levels = 1:4,
+                       labels = c("Indemne", "Mort", "Blessé hospitalisé", "Blessé léger"))
+
+# Créer un boxplot avec le nombre d'accidents sur l'axe x et l'âge sur l'axe y, en facet_wrap selon la gravité
+ggplot(sub_df, aes(x = nombre_accidents, y = age)) +
+  geom_boxplot() +
+  ylab("Âge du conducteur") +
+  xlab("Nombre d'accidents") +
+  coord_flip() + 
+  ggtitle("Boxplot sur l'âge des conducteurs/conductrices en fonction de la gravité") +
+  facet_wrap(~grav, scales = "free")
+
+# Afficher les statistiques du boxplot pour chaque niveau de gravité
+print(by(sub_df$age, sub_df$grav, boxplot.stats))
+
+```
+
+- Le nombre d'observations varie de 83 à 86.
+- La médiane de l'âge est d'environ 35 ans pour tous les groupes de gravité.
+- Le groupe "Indemne" a la valeur minimale la plus élevée et le groupe "Blessé léger" a la valeur maximale la plus élevée. - Cela indique que les conducteurs indemnes ont tendance à être plus âgés que les autres groupes de gravité, tandis que les conducteurs blessés légèrement ont tendance à être plus jeunes.
+- Il n'y a pas de valeurs aberrantes pour chaque groupe de gravité.
+
+Voici ce que nous pouvons observer sur l'ensemble du jeu de données : 
+
+
+```{r echo=FALSE, warning=FALSE}
+# Sous-ensemble de données contenant l'âge et le nombre d'accidents pour chaque âge
+sub_df <- df %>% filter(place == 1, catu == 1, age > 13) %>%
+  group_by(age) %>% 
+  summarise(nombre_accidents = n()) %>% 
+  filter(!is.na(age))
+# Créer un boxplot avec le nombre d'accidents sur l'axe x et l'âge sur l'axe y
+ggplot(sub_df, aes(x = nombre_accidents, y = age)) +
+  geom_boxplot() +
+  ylab("Âge du conducteur") +
+  xlab("Nombre d'accidents") +
+  coord_flip() + ggtitle("Boxplot sur l'âge des conducteurs/conductrices")
+# Afficher les statistiques du boxplot
+print(boxplot.stats(sub_df$age))
+```
+
+Sur 126086 accidents de la route en 2021, 50 % des conducteurs ont moins de 57 ans. 50 % d'entre eux ont entre 35.5 et 78.5 ans.
+
+
+Dans ce cas, l'intervalle de confiance est [49.7,64.3], ce qui signifie que l'on peut être raisonnablement sûr que la moyenne de l'âge dans la population dont l'échantillon a été prélevé se trouve dans cette plage avec une probabilité de 95%.
+
+Pour un autre point de vue sur le nombre d'accidents par age (conducteur ou non conducteur) : 
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+## remettre dans l'ordre les chiffres de grav
+# accidents par année de naissance en 2021
+plot_usagers <- df %>% filter(catu == 1, age > 13) %>% group_by(age, grav) %>% summarize("count" = n()) %>% filter(grav == 2)
+ggplot(data = plot_usagers, aes(x=age, y=count, fill=grav)) +
+  geom_bar(stat="identity", fill = "#339966") + geom_smooth(se=FALSE, color = "orange") + ggtitle("Effectif des accidents mortels par âge du conducteurs")+    theme(legend.position='none') + xlab("Âge du conducteur") + ylab("Effectif")
+plot_usagers <- df %>% group_by(age, grav) %>% summarize("count" = n()) %>% filter(grav == 2)
+ggplot(data = plot_usagers, aes(x=age, y=count, fill=grav)) +
+  geom_bar(stat="identity", fill = "#339966") + geom_smooth(se=FALSE, color = "orange") + ggtitle("Effectif des accidents mortels par âge des personnes touchées")+    theme(legend.position='none') + xlab("Âge") + ylab("Effectif")
+rm(plot_usagers, plot_sexe)
+```
+
+On constate la même croissance du nombre d'accidents mortels (conducteur ou non) de 0 à 23 ans, les personnes touchées sont plus nombreuses, ce qui est normal il y a les passagers ajoutés. La tendance décroît fortement de 23 à 40 ans avant de rester plus ou moins au même niveau jusqu'à environ 70 ans.
+Pour les conducteurs, on constate une décroissance nette plus tôt que chez les personnes touchées, une hypothèse serait que plus l'âge augmente, moins il y a de conducteurs.
+
+Le fort pique autour de 20 ans pourrait s'expliquer par l'âge de l'obtention du permis de conduire qui se traduit par un manque d'expérience en tant que conducteur. Cela pourrait aussi s'expliquer, dans le cas des personnes touchées, par le fait que pas 100% des jeunes d'environ 20 ans ont une voiture, donc une personne de 20 ans avec une voiture va plus avoir tendance à amener avec lui ses amis ainsi un accident d'une voiture d'une personne de 20 ans compte possiblement 2, 3 voire 4 personnes en plus. 
+
+De ces données nous pouvons en déduire le graphique de densité suivant : 
+
+```{r echo=FALSE, warning=FALSE}
+# Sous-ensemble de données contenant la gravité de l'accident et l'âge du conducteur
+sub_df <- df[, c("grav", "age")]
+# Supprimer les lignes où l'âge est manquant
+sub_df <- na.omit(sub_df)
+# Créer un graphique de densité pour la gravité de l'accident par tranche d'âge
+ggplot(sub_df, aes(x = age, fill = factor(grav))) +
+  geom_density(alpha = 0.5) +
+  xlab("Âge") +
+  ylab("Densité") +
+  scale_fill_discrete(name = "Gravité de l'accident",
+                      labels = c("Indemne", "Blessé léger", "Blessé hospitalisé", "Mort")) + ggtitle("Densité des accidents par âge des personnes touchées")
+```
+
+
+De manière générale, le graphique de densité montre comment les distributions de l'âge des conducteurs diffèrent selon la gravité de l'accident. On remarque un fort pic de densité autour de 20 ans ce qui laisse penser à une forte corrélation entre l'age et la gravité de l'accident.
+
+Pour déterminer si il y a une corrélation ou non entre l'âge et la gravité de l'accident, nous avons établi une régression logistique que voici : 
+
+```{r echo=FALSE, warning=FALSE}
+## concept de regression logistique :  il s'agit d'expliquer au mieux une variable binaire (la présence ou l'absence d'une caractéristique donnée) par des observations réelles nombreuses
+# Créer une variable binaire pour la gravité de l'accident (1 si l'accident est grave, 0 sinon)
+sub_df$grav_bin <- ifelse(sub_df$grav > 1, 1, 0)
+# Supprimer les lignes où l'âge est manquant
+sub_df <- na.omit(sub_df)
+# Effectuer la régression logistique
+model <- glm(grav_bin ~ age, data = sub_df, family = binomial())
+# Résumé de la régression logistique
+summary(model)
+##############################################################################################
+######################### Notes sur les significations des résultats #########################
+##############################################################################################
+# Call : indique la formule utilisée pour ajuster le modèle, les options et les données.
+# 
+# Deviance Residuals : affiche les résidus de deviance pour chaque observation. La deviance est un critère qui mesure l'ajustement du modèle aux données. Les résidus de deviance indiquent si le modèle prédit correctement la gravité de l'accident.
+# 
+# Coefficients : fournit les coefficients de régression estimés pour chaque variable d'entrée. Dans ce cas, il y a une seule variable d'entrée, l'âge. Pour chaque année d'augmentation de l'âge, la probabilité de subir un accident mortel diminue de 0,6 % (coefficient négatif). Le coefficient de l'interception indique la probabilité de subir un accident mortel pour une personne de 0 an (en pratique cela n'a pas de sens, il s'agit d'une propriété mathématique du modèle).
+# 
+# Signif. codes : indique le niveau de signification de chaque coefficient estimé. Les étoiles servent à représenter différents niveaux de significativité : *** pour un niveau très significatif, ** pour un niveau significatif, * pour un niveau de signification modéré, . pour un niveau de signification faible.
+# 
+# Dispersion parameter : fournit l'estimation de la variance de la distribution des résidus.
+# 
+# Null deviance : indique la deviance du modèle nul, c'est-à-dire un modèle qui ne contient aucune variable explicative.
+# 
+# Residual deviance : indique la deviance résiduelle du modèle, c'est-à-dire la deviance restante après avoir ajusté le modèle aux données.
+# 
+# AIC : fournit le critère d'information d'Akaike, un critère d'ajustement qui tient compte de la complexité du modèle et de l'ajustement aux données.
+# 
+# Number of Fisher Scoring iterations : indique le nombre d'itérations nécessaires pour estimer les paramètres du modèle.
+```
+
+
+Les résultats de la régression logistique indiquent que l'âge est significativement associé à la gravité des accidents. Plus précisément, pour une unité d'augmentation de l'âge, la log-odds d'avoir une gravité plus élevée diminue de 0,00667. Cela peut être interprété comme une diminution de la probabilité d'avoir une gravité plus élevée pour chaque année supplémentaire.
+
+Le rapport des deviances (null deviance et residual deviance) montre que le modèle ajuste bien les données, car il y a une réduction significative de la deviance résiduelle par rapport à la deviance nulle. En outre, l'AIC est relativement faible, ce qui indique que le modèle est un ajustement approprié pour les données.
+
+Le test de significativité indique que la relation entre l'âge et la gravité de l'accident est très significative (p-value < 2e-16), ce qui renforce l'idée que l'âge est un facteur important à prendre en compte dans l'évaluation de la gravité des accidents de la route.
+
+En résumé, les résultats de la régression logistique soutiennent l'idée que l'âge est significativement associé à la gravité des accidents de la route et que le modèle est un ajustement approprié pour les données.
+
+
+### Est-ce que le sexe influence la gravité des accidents ?
+
+Ici, à l'aide de représentations graphique et de test du Chi2 nous allons observer si le sexe et la gravité ont une corrélation ou non en distinguant les personnes touchées et les conducteurs/trices.
+
+
+```{r echo=FALSE, warning=FALSE}
+sub_df <- df[, c("grav", "sexe")]
+# enleve les na
+sub_df <- na.omit(sub_df) %>% filter(sexe != -1)
+tab <- table(sub_df$sexe, sub_df$grav)
+# Conversion de la table croisée en un data frame
+df_s <- as.data.frame.matrix(tab)
+df_s$sexe <- rownames(df_s)
+# Mise en forme des données pour un diagramme en barres empilées
+df_long <- tidyr::gather(df_s, key = "grav", value = "count", -sexe)
+df_long$grav <- factor(df_long$grav, levels = c("1", "2", "3", "4"))
+df_long$sexe <- factor(df_long$sexe, levels = c("1", "2"))
+# Convertir la variable grav en factor avec les niveaux correspondants
+df_long$grav <- factor(df_long$grav, levels = 1:4,
+                       labels = c("Indemne", "Mort", "Blessé hospitalisé", "Blessé léger"))
+df_long$sexe <- factor(df_long$sexe, levels = 1:2,
+                       labels = c("Homme", "Femme"))
+# Définir les couleurs personnalisées
+colors <- c("Homme" = "pink", 
+            "Femme" = "lightblue")
+# Réorganiser les niveaux de la variable "grav" en fonction de la fréquence
+df_long$grav <- reorder(df_long$grav, desc(df_long$count))
+# Créer le graphique
+ggplot(df_long, aes(x = grav, fill = sexe)) +
+  geom_col(position = "dodge", aes(y = count)) +
+  scale_fill_manual(values = colors, name = "Sexe",
+                    labels = c("Homme", "Femme")) +
+  labs(title = "Gravité des accidents par sexe", x = "", y = "Nombre d'accidents") + theme_gray()
+```
+
+
+```{r echo=FALSE, warning=FALSE}
+d <- df %>% filter(age > 13, catu == 1)
+sub_df <- d[, c("grav", "sexe")]
+# enleve les na
+sub_df <- na.omit(sub_df) %>% filter(sexe != -1)
+tab <- table(sub_df$sexe, sub_df$grav)
+# Conversion de la table croisée en un data frame
+df_s <- as.data.frame.matrix(tab)
+df_s$sexe <- rownames(df_s)
+# Mise en forme des données pour un diagramme en barres empilées
+df_long <- tidyr::gather(df_s, key = "grav", value = "count", -sexe)
+df_long$grav <- factor(df_long$grav, levels = c("1", "2", "3", "4"))
+df_long$sexe <- factor(df_long$sexe, levels = c("1", "2"))
+# Convertir la variable grav en factor avec les niveaux correspondants
+df_long$grav <- factor(df_long$grav, levels = 1:4,
+                       labels = c("Indemne", "Mort", "Blessé hospitalisé", "Blessé léger"))
+df_long$sexe <- factor(df_long$sexe, levels = 1:2,
+                       labels = c("Homme", "Femme"))
+# Définir les couleurs personnalisées
+colors <- c("Homme" = "pink", 
+            "Femme" = "lightblue")
+# Réorganiser les niveaux de la variable "grav" en fonction de la fréquence
+df_long$grav <- reorder(df_long$grav, desc(df_long$count))
+# Créer le graphique
+ggplot(df_long, aes(x = grav, fill = sexe)) +
+  geom_col(position = "dodge", aes(y = count)) +
+  scale_fill_manual(values = colors, name = "Sexe",
+                    labels = c("Homme", "Femme")) +
+  labs(title = "Gravité des accidents par sexe du conducteur", x = "", y = "Nombre d'accidents") + theme_gray()
+```
+
+On remarque que, conducteur.trice ou non, la tendance reste la même au niveau de la gravité. La quantité d'accidents reste plus importante chez les hommes que chez les femmes. Cependant, nous n'avons pas la quantité totale de conducteur.trice en France donc on ne peut pas avoir une proportion du nombre d'accidents.
+
+
+```{r echo=FALSE, warning=FALSE}
+#test du X²
+df_conducteurs <- df %>% filter(catu == 1, age > 13)
+chisq.test(table(df_conducteurs$sexe, df_conducteurs$grav))
+```
+Puisque la p-value est inférieure au seuil de significativité communément utilisé de 0,05, on peut rejeter l'hypothèse nulle selon laquelle il n'y a pas d'association entre le sexe et la gravité des accidents de la route. On peut donc conclure qu'il y a une association significative entre le sexe et la gravité des accidents de la route en France en 2021.
+
+Cela signifie que le sexe des conducteurs est statistiquement significatif pour prédire la gravité des accidents de la route en France en 2021. Cependant, il est important de noter que les résultats de ce test ne permettent pas de déterminer la direction de l'association (c'est-à-dire, si les accidents graves sont plus fréquents chez les hommes ou chez les femmes).
+
+
+## Est ce que le lieu influence la gravité des accidents ?
+
+Un autre facteur de gravité pourrait être le lieu de l'accidents, voyons si il y a des lieux où la gravité des accidents est plus forte.
+
+```{r echo=FALSE, warning=FALSE}
+################### carte du rapport accident_mortel / nb accidents * 100 en France en 2021
+# Importer les données géographiques
+regions_geojson <- st_read("https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/regions-version-simplifiee.geojson")
+# Calculer le nombre d'accidents par région
+df_region <- df %>%
+  group_by(region) %>%
+  summarise(n_accidents = n())
+
+
+
+# Fusionner les données géographiques et les données de nombre d'accidents
+map_df <- left_join(regions_geojson, df_region, by = c("nom" = "region"))
+# Créer la carte
+ggplot() +
+  geom_sf(data = map_df, aes(fill = n_accidents)) +
+  scale_fill_gradient(low = "lightyellow", high = "darkred") +
+  ggtitle("Nombre d'accidents par région en France en 2021") +
+  labs(fill="Nombre d'accidents") +
+  theme_void()
+########### carte du nombre d'accidents par région en France en 2021
+# Calculer le nombre d'accidents par région
+df_region <- df %>%
+  group_by(region) %>%
+  summarise(n_accidents = n(),
+            n_accidents_mortels = sum(grav == 2),
+            taux_accidents_mortels = round(sum(grav == 2)/n_accidents, 4)*100)
+# Fusionner les données géographiques et les données de nombre d'accidents
+map_df <- left_join(regions_geojson, df_region, by = c("nom" = "region"))
+# Créer la carte
+ggplot() +
+  geom_sf(data = map_df, aes(fill = taux_accidents_mortels)) +
+  scale_fill_gradient(low = "lightyellow", high = "darkred") +
+  ggtitle("Rapport du nombre d'accidents mortels sur le nombre d'accidents par région") + 
+  labs(fill = "Taux d'accidents graves") +
+  theme_void()
+# Créer une table de contingence croisant la région et la gravité de l'accident
+cont_table <- table(df$region, df$grav)
+# Effectuer le test du chi2
+chi2 <- chisq.test(cont_table)
+chi2
+```
+
+Le résultat du test montre une statistique de test de 6065.5 et un degré de liberté de 39, ce qui donne une p-value inférieure à 2.2e-16.
+
+La p-value est très faible, ce qui suggère qu'il y a une forte association entre la région et la gravité de l'accident. Autrement dit, la gravité des accidents semble varier significativement selon la région où ils se produisent.
+
+La région Parisienne a le plus de nombre d'accidents, mais c'est aussi la plus peuplée, on constate à la suite que cette région a le plus d'accidents mais les moins graves. On peut émettre l'hypothèse que la limitation de vitesse peut peut-être influer la gravité des accidents.
+
+Seulement, notre variable sur la limitation de vitesse n'est pas utilisable en vue des valeurs au-delà de 130 km/h.
+
+```{r echo=FALSE, warning=FALSE}
+# Importer les données géographiques
+deps_geojson <- st_read("https://france-geojson.gregoiredavid.fr/repo/departements.geojson")
+# Calculer le nombre d'accidents par région
+df_dep <- df %>%
+  group_by(dep) %>%
+  summarise(n_accidents = n())
+# Fusionner les données géographiques et les données de nombre d'accidents
+map_df <- left_join(deps_geojson, df_dep, by = c("code" = "dep"))
+# Créer la carte
+ggplot() +
+  geom_sf(data = map_df, aes(fill = n_accidents)) +
+  scale_fill_gradient2(low = "lightyellow", mid = "orange",high = "darkred", midpoint = 6000) +
+  ggtitle("Nombre d'accidents par département en France en 2021") +
+  labs(fill="Nombre d'accidents") +
+  theme_void()
+########### carte du nombre d'accidents par région en France en 2021
+# Calculer le nombre d'accidents par région
+df_dep <- df %>%
+  group_by(dep) %>%
+  summarise(n_accidents = n(),
+            n_accidents_mortels = sum(grav == 2),
+            taux_accidents_mortels = round(sum(grav == 2)/n_accidents, 4)*100)
+# Fusionner les données géographiques et les données de nombre d'accidents
+map_df <- left_join(deps_geojson, df_dep, by = c("code" = "dep"))
+# Créer la carte
+ggplot() +
+  geom_sf(data = map_df, aes(fill = taux_accidents_mortels)) +
+  scale_fill_gradient(low = "lightyellow", high = "darkred") +
+  ggtitle("Rapport du nombre d'accidents mortels sur le nombre d'accidents par département") + 
+  labs(fill = "Taux d'accidents graves") +
+  theme_void()
+# Créer une table de contingence croisant la région et la gravité de l'accident
+cont_table <- table(df$dep, df$grav)
+# Effectuer le test du chi2
+chi2 <- chisq.test(cont_table)
+chi2
+```
+Dans les deux résultats, la statistique de test est très élevée (6065.5 pour les régions et 10960 pour les départements), ce qui suggère qu'il existe un lien significatif entre la région/departement et la gravité de l'accident. On remarque que les deux cartes précédentes sont quasiment inverse c'est-à-dire que dans les zones où le nombre d'accidents est élévé, le taux d'accidents mortels l'est moins. On remarque ceci notamment pour la région d'île de france et pour le département du rhône. Cela pourrait s'expliquer par le fait que dans les grandes villes, les accidents se font à  des vitesses réduites. 
+
+
+## Est ce que l'environnement influence la gravité des accidents ?
+
+### Est ce que la catégorie de véhicule influence la gravité ?
+```{r echo=FALSE, warning=FALSE}
+#Créer une nouvelle variable "categorie" à partir de la variable "catv"
+df$categorie <- ifelse(df$catv %in% c("01", "02", "03", "05", "06", "30", "31", "32", "33", "34", "41", "42", "43"), "Deux-roues", 
+                   ifelse(df$catv %in% c("04", "07", "10", "11", "12"), "Voiture", 
+                   ifelse(df$catv %in% c("13", "14", "15", "16", "17"), "Camion", 
+                   ifelse(df$catv %in% c("18", "19", "37", "38", "40"), "Transport en commun", 
+                   ifelse(df$catv %in% c("20", "21"), "Engin spécial", "Autre")))))
+
+
+# Créer un tableau croisé entre catv et grav
+ctable <- table(df$categorie, df$grav)
+
+# Convertir en data frame et renommer les colonnes
+df_ctable <- as.data.frame.matrix(ctable)
+colnames(df_ctable) <- c("Indemne", "Mort", "Blessé hospitalisé", "Blessé léger")
+
+# Ajouter une colonne avec le total de chaque catégorie de véhicule
+
+# Ajouter la variable "catv" et convertir en format long pour pouvoir utiliser ggplot
+df_ctable_long <- df_ctable %>% 
+  mutate(catv = rownames(df_ctable)) %>% 
+  gather(key = "grav", value = "count", -catv) %>% 
+  group_by(catv) %>% 
+  mutate(percent = count/sum(count)*100)
+
+
+# Créer le graphique
+ggplot(df_ctable_long, aes(x = percent, y = catv, fill = grav)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Répartition des catégories de véhicules par niveau de gravité",
+       x = "Catégorie de véhicule", y = "Pourcentage") +
+  scale_fill_manual(name = "Gravité de l'accident",
+                    labels = c("Indemne", "Blessé léger", "Blessé hospitalisé", "Mort"),
+                    values = c("green", "yellow", "orange", "red")) +
+  theme_classic()
+
+
+df$grav_binary <- ifelse(df$grav %in% c(2,3), 1, 0)
+
+model <- glm(grav_binary ~ categorie, data = df, family = binomial)
+summary(model)
+
+
+```
+La première partie de la sortie donne quelques informations sur la qualité de l'ajustement du modèle, notamment les résidus de deviance. Dans l'ensemble, les résidus semblent assez faibles, ce qui suggère que le modèle s'adapte bien aux données.
+
+La deuxième partie de la sortie présente les coefficients estimés pour chaque niveau de la variable explicative (les différentes catégories de véhicules). Les coefficients indiquent l'effet de chaque niveau de la variable explicative sur la probabilité de gravité de l'accident. Par exemple, la variable categorieTransport en commun a un coefficient négatif (-1.050340), ce qui signifie qu'être impliqué dans un accident avec un transport en commun diminue la probabilité de gravité de l'accident par rapport aux autres catégories de véhicules.
+
+En somme, ces résultats indiquent que la catégorie de véhicule est un facteur significatif pour prédire la gravité de l'accident, et que certains types de véhicules ont une probabilité de gravité plus élevée ou plus faible que d'autres.
+
+
+### Est ce que l'équipement de sécurité influence la gravité ?
+
+```{r echo=FALSE, warning=FALSE}
+
+
+df_secu = data.frame(df$grav)
+df_secu$grav = df$grav
+
+df_secu$grav <- factor(df$grav, levels = c(1, 2, 3, 4), 
+                     labels = c("Indemne", "Mort","Blessé hospitalisé", "Blessé léger"))
+
+df_secu$secu1 <- factor(df$secu1, levels = c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, -1), 
+                     labels = c("Aucun équipement", "Ceinture", "Casque", "Dispositif enfants", 
+                                "Gilet réfléchissant", "Airbag", "Gants", "Gants + Airbag", 
+                                "Non déterminable", "Autre", "Non renseigné"))
+df_secu$secu2 <- factor(df$secu2, levels = c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), 
+                     labels = c("Aucun équipement", "Ceinture", "Casque", "Dispositif enfants", 
+                                "Gilet réfléchissant", "Airbag", "Gants", "Gants + Airbag", 
+                                "Non déterminable", "Autre"))
+df_secu$secu3 <- factor(df$secu3, levels = c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), 
+                     labels = c("Aucun équipement", "Ceinture", "Casque", "Dispositif enfants", 
+                                "Gilet réfléchissant", "Airbag", "Gants", "Gants + Airbag", 
+                                "Non déterminable", "Autre"))
+
+# ggplot(df_secu, aes(x = grav, fill = secu1)) +
+#   geom_bar(position = "fill") +
+#   scale_fill_manual(values = c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2",
+#                                "#D55E00", "#CC79A7", "#999999", "#000000" ,"#570B66", "#382B53")) +
+#   labs(title = "Lien entre l'équipement de sécurité et la gravité de l'accident",
+#        x = "Gravité de l'accident", y = "Proportion") +
+#   theme_classic() +
+#   scale_y_continuous(trans = "log")
+
+# Créer un dataframe avec les données de secu1
+df_secu1 <- data.frame(table(df_secu$secu1))
+
+ggplot(df_secu, aes(x = grav, fill = secu1)) +
+  labs(title = "Gravité et nombre d'accidents par rapport à l'équipement de sécurité porté par les passagers",x ="Gravité", y="Nombre d'accidents", fill = "Sécurité") + 
+  geom_bar()
+
+
+
+
+# Création de la table de contingence
+tab <- table(df_secu$grav, df_secu$secu1)
+
+# Ajout des marges
+tab_marg <- addmargins(tab)
+
+# Arrondi des valeurs de la table à deux décimales
+tab_marg <- round(tab_marg, 2)
+
+# Formatage de la table sous forme de tableau
+# tab_marg_format <- format(tab_marg, nsmall = 2, justify = "right")
+# colnames(tab_marg_format) <- c("Secu 1", "Total")
+# rownames(tab_marg_format) <- c("Indemne", "Tué", "Blessé hospitalisé", "Blessé léger", "Total")
+
+```
+
+On constate que, parmis les accidents de la route de notre jeu de données, une grande majorité a un équipement de sécurité équipé tel que la ceinture ou un casque pour les 2 roues.
+
+
+```{r echo=FALSE, warning=FALSE}
+# Créer le tableau de fréquences conditionnelles entre grav et secu1
+freq_table <- prop.table(table(df_secu$grav, df_secu$secu1), margin = 1) * 100
+
+# Ajouter des totaux de colonne et de ligne
+# freq_table <- addmargins(freq_table, margin = 1)
+# freq_table <- addmargins(freq_table, margin = 2)
+
+# Afficher le tableau de fréquences conditionnelles avec les totaux
+freq_table
+
+
+```
+
+Dans les faits, 79.8% des accidents où les passagers ont porté une ceinture de sécurité, ils sont sortis indemnes.
+
+On peut tirer plusieurs conclusions de ce tableau, par exemple :
+
+- Dans l'ensemble des accidents, la majorité des passagers portent une ceinture de sécurité.
+- Les passagers qui ne portent aucun équipement de sécurité ont un risque accru d'être gravement blessés ou tués dans un accident.
+- Le port du casque est associé à une gravité plus élevée des accidents, probablement en raison du fait que les accidents où le casque est porté sont principalement des accidents de moto.
+- Les passagers qui portent un gilet réfléchissant ou un dispositif pour enfants ont des taux de mortalité et de blessures graves relativement faibles.
+- Les valeurs "Non déterminable" et "Non renseigné" pour l'équipement de sécurité sont relativement élevées, ce qui peut indiquer des lacunes dans la collecte de données ou des erreurs dans la déclaration des équipements de sécurité portés.
+  
+
+      
+### Est ce que la luminosité influence la gravité des accidents ?
+      
+```{r echo=FALSE, warning=FALSE}
+d <- df %>% filter(age > 13, catu == 1)
+
+sub_df <- d[, c("grav", "lum")]
+
+# enleve les na
+sub_df <- na.omit(sub_df) %>% filter(lum != -1)
+
+tab <- table(sub_df$lum, sub_df$grav)
+
+# Conversion de la table croisée en un data frame
+df_s <- as.data.frame.matrix(tab)
+df_s$lum <- rownames(df_s)
+
+# Mise en forme des données pour un diagramme en barres empilées
+df_long <- tidyr::gather(df_s, key = "grav", value = "count", -lum)
+df_long$grav <- factor(df_long$grav, levels = c("1", "2", "3", "4"))
+df_long$sexe <- factor(df_long$lum, levels = c("1", "2", "3", "4", "5"))
+
+# Convertir la variable grav en factor avec les niveaux correspondants
+df_long$grav <- factor(df_long$grav, levels = 1:4,
+                       labels = c("Indemne", "Mort", "Blessé hospitalisé", "Blessé léger"))
+
+df_long$lum <- factor(df_long$sexe, levels = 1:2:3:4:5,
+                    labels = c("Plein jour", 
+                            "Crépuscule ou aube",
+                            "Nuit sans éclairage public",
+                            "Nuit avec éclairage public non allumé",
+                            "Nuit avec éclairage public allumé"))
+
+# Définir les couleurs personnalisées
+colors <- c("Plein jour"="yellow", 
+        "Crépuscule ou aube"="orange",
+        "Nuit sans éclairage public"="darkblue",
+        "Nuit avec éclairage public non allumé"="purple",
+        "Nuit avec éclairage public allumé"="lightblue")
+
+
+# Réorganiser les niveaux de la variable "grav" en fonction de la fréquence
+df_long$grav <- reorder(df_long$grav, desc(df_long$count))
+
+# Créer le graphique
+ggplot(df_long, aes(x = grav, fill = lum)) +
+  geom_col(position = "dodge", aes(y = count), alpha = 0.8) +
+  scale_fill_manual(values = colors, name = "Conditions d'eclairage",
+                    labels = c("Plein jour", 
+                            "Crépuscule ou aube",
+                            "Nuit sans éclairage public",
+                            "Nuit avec éclairage public non allumé",
+                            "Nuit avec éclairage public allumé")) +
+  labs(title = "Gravité des accidents par condition d'eclairage", x = "", y = "Nombre d'accidents") + theme_gray()+
+  coord_flip()
+
+```
+
+#### On effectue un test du Chi² pour tester la corrélation entre la gravité et l'état de la route
+
+```{r echo=FALSE, warning=FALSE}
+chisq.test(df$grav, df$surf)
+
+```
+
+La p-value élevée de 1 indique que l'hypothèse nulle, selon laquelle il n'y a pas de corrélation entre les deux variables, ne peut être rejetée. Autrement dit, il n'y a pas de preuve statistique pour affirmer qu'il y a une corrélation significative entre la gravité des blessures (variable "grav") et l'état de la surface (variable "surf") dans les accidents de la route en France en 2021.
+
+
+## Conclusion
+
+Les conclusions que l'on peut tirer de cette étude sont les suivantes :
+
+- La fin du confinement en juin 2021 a entraîné une augmentation du nombre d'accidents de la route en France, probablement en raison de l'augmentation du nombre de voitures sur les routes.
+- Les accidents sont plus fréquents l'après-midi et le matin, pendant les périodes de pointe de la circulation, lorsque de nombreuses personnes vont au travail ou emmènent leurs enfants à l'école.
+- L'âge des conducteurs est significativement associé à la gravité des accidents, avec une diminution de la probabilité d'avoir une gravité plus élevée pour chaque année supplémentaire. Les conducteurs indemnes ont tendance à être plus âgés que les autres groupes de gravité, tandis que les conducteurs blessés légèrement ont tendance à être plus jeunes.
+- Le sexe ne semble pas influencer significativement la gravité des accidents, bien que le nombre total de conducteurs soit plus élevé chez les hommes que chez les femmes.
+
+Ces conclusions peuvent être utilisées pour élaborer des politiques visant à améliorer la sécurité routière, telles que la sensibilisation aux dangers de la conduite pendant les périodes de pointe de la circulation, la formation des conducteurs plus jeunes et l'amélioration de la sécurité des routes pour les conducteurs plus âgés.

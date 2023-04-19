@@ -1,0 +1,72 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+```
+
+```{r include=FALSE}
+## import des données
+caracteristiques_2021 <- read.csv("data/carcteristiques-2021.csv", sep=";", encoding = "UTF-8")
+caracteristiques_2021$Num_Acc <- as.character(caracteristiques_2021$Num_Acc)
+usagers_2021 <- read.csv("data/usagers-2021.csv", sep=";", encoding = "UTF-8")
+usagers_2021$Num_Acc <- as.character(usagers_2021$Num_Acc)
+## filter pour enlever les données non renseignées
+usagers_2021 <- usagers_2021 %>% filter(usagers_2021$grav != -1)
+vehicules_2021 <- read.csv("data/vehicules-2021.csv", sep=";", encoding = "UTF-8")
+vehicules_2021$Num_Acc <- as.character(vehicules_2021$Num_Acc)
+lieux_2021 <- read.csv("data/lieux-2021.csv", sep=";", encoding = "UTF-8")
+lieux_2021$Num_Acc <- as.character(lieux_2021$Num_Acc)
+```
+
+```{r include=FALSE}
+## fusion du jeu de données global
+tmp <- merge(caracteristiques_2021, lieux_2021, by ="Num_Acc")
+tmp1 <- merge(usagers_2021, vehicules_2021, by=c("Num_Acc", "id_vehicule", "num_veh"))
+data <- merge(tmp1, tmp, by="Num_Acc")
+rm(tmp, tmp1)
+```
+
+
+```{r include=FALSE}
+## preparation des données (on supprime ce qui nous interesse pas)
+## unité : une personne
+## population : les accidents en France en 2021
+## ajouter une colonne calculée pour l'age
+## catégorie catv à réduire / regrouper
+data <- data %>% select(-an, -int, -adr, -locp, -actp, -etatp, -senc, -obs, -choc, -manv, -motor, -occutc, -catr, -voie, -v1, -v2, -circ, -nbv, -vosp, -prof, -pr, -pr1, -plan, -lartpc, -larrout, -surf, -infra, -situ, -atm)
+```
+
+
+```{r include=FALSE}
+## Champs calculé
+age <- data.frame(2021 - data$an_nais)
+data <- cbind(data, age)
+colnames(data)[26] <- "age"
+
+## les régions
+data$region <- case_when(
+  data$dep %in% c("01", "03", "07", "15", "26", "38", "42", "43", "63", "69", "73", "74") ~ "Auvergne-Rhône-Alpes",
+  data$dep %in% c("08", "10", "51", "52", "54", "55", "57", "67", "68", "88") ~ "Grand Est",
+  data$dep %in% c("18", "28", "36", "37", "41", "45") ~ "Centre-Val de Loire",
+  data$dep %in% c("21", "25", "39", "58", "70", "71", "89", "90") ~ "Bourgogne-Franche-Comté",
+  data$dep %in% c("22", "29", "35", "56") ~ "Bretagne",
+  data$dep %in% c("02", "59", "60", "62", "80") ~ "Hauts-de-France",
+  data$dep %in% c("14", "27", "50", "61", "76") ~ "Normandie",
+  data$dep %in% c("16", "17", "79", "86", "87") ~ "Nouvelle-Aquitaine",
+  data$dep %in% c("09", "11", "12", "30", "31", "32", "34", "46", "48", "65", "66", "81", "82") ~ "Occitanie",
+  data$dep %in% c("44", "49", "53", "72", "85") ~ "Pays de la Loire",
+  data$dep %in% c("75", "77", "78", "91", "92", "93", "94", "95") ~ "Île-de-France",
+  data$dep %in% c("19", "23", "24", "33", "40", "47", "64", "82") ~ "Nouvelle-Aquitaine",
+  data$dep %in% c("04", "05", "06", "13", "83", "84") ~ "Provence-Alpes-Côte d'Azur",
+  data$dep %in% c("2A", "2B") ~ "Corse",
+  TRUE ~ "Autre"
+)
+
+```
+
+```{r}
+## création du fichier excel 
+write.csv2(data, file="data/data.csv", row.names = FALSE)
+```
+
